@@ -79,3 +79,13 @@ func TestGetBooks(t *testing.T) {
 	actual := books[0]
 	assert.Equal(t, expected, actual)
 }
+
+func TestGetBooksSingleAuthor(t *testing.T) {
+	input := `[{"id":5,"authors":"Single Author"}]`
+	subject := (&calibre.Calibre{}).WithOverride(input)
+	books, err := subject.GetBooks(context.Background())
+	require.NoError(t, err)
+	require.Len(t, books, 1)
+	book := books[0]
+	require.Equal(t, []string{"Single Author"}, book.Authors)
+}

@@ -17,6 +17,11 @@ type Calibre struct {
 	override string // Overridden output, for testing
 }
 
+type decodingBook struct {
+	*model.CalibreBook
+	Authors any // Override author field; see GetBooks() for details.
+}
+
 func (c *Calibre) WithLibrary(libraryPath string) *Calibre {
 	c.library = libraryPath
 	return c
@@ -60,9 +65,43 @@ func (c *Calibre) GetBooks(ctx context.Context) ([]model.CalibreBook, error) {
 	if err != nil {
 		return nil, err
 	}
-	var result []model.CalibreBook
-	if err = json.Unmarshal([]byte(data), &result); err != nil {
+	decoder := json.NewDecoder(bytes.NewBufferString(data))
+	token, err := decoder.Token()
+	if err != nil {
 		return nil, err
+	}
+	if delim, ok := token.(json.Delim); !ok || delim != '[' {
+		return nil, fmt.Errorf("invalid leading token %s", delim)
+	}
+	var result []model.CalibreBook
+	for decoder.More() {
+		var next decodingBook
+		if err = decoder.Decode(&next); err != nil {
+			return nil, err
+		}
+
+		// Fix up the authors field:
+		// "authors" can either be an array of string, or a bare string.  This
+		// confuses the normal golang json decoder, so we have to create a
+		// struct that serializes it as `any`, and then inspect the result to
+		// set the result correctly.
+		if next.Authors == nil {
+			return nil, fmt.Errorf("could not find authors in %s", next.CalibreBook.Title)
+		} else if authors, ok := next.Authors.([]any); ok {
+			for _, authorObj := range authors {
+				if author, ok := authorObj.(string); ok {
+					next.CalibreBook.Authors = append(next.CalibreBook.Authors, author)
+				} else {
+					return nil, fmt.Errorf("could not parse %s: invalid author (%T) %v", next.CalibreBook.Title, authorObj, authorObj)
+				}
+			}
+		} else if author, ok := next.Authors.(string); ok {
+			next.CalibreBook.Authors = append(next.CalibreBook.Authors, author)
+		} else {
+			return nil, fmt.Errorf("could not parse %s: invalid authors (%T) %v", next.CalibreBook.Title, next.Authors, next.Authors)
+		}
+
+		result = append(result, *next.CalibreBook)
 	}
 	return result, nil
 }
