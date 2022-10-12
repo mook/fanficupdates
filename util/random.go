@@ -8,56 +8,46 @@ import (
 	"time"
 )
 
-type RandomStringReader struct {
-	reader  io.Reader
-	encoder io.WriteCloser
-	buffer  bytes.Buffer
+var randReader io.Reader
+var randEncoder io.Writer
+var randBuffer bytes.Buffer
+
+func init() {
+	randReader = rand.New(rand.NewSource(time.Now().Unix()))
+	randEncoder = base64.NewEncoder(base64.URLEncoding, &randBuffer)
 }
 
-func NewRandomStringReader() *RandomStringReader {
-	result := &RandomStringReader{
-		reader: rand.New(rand.NewSource(time.Now().Unix())),
-	}
-	result.encoder = base64.NewEncoder(base64.StdEncoding, &result.buffer)
-	return result
-}
-
-func (r *RandomStringReader) Read(p []byte) (int, error) {
-	required := len(p) - r.buffer.Len()
+// RandomStringWithLength returns a random string with a given length
+func RandomStringWithLength(length int) string {
+	required := length - randBuffer.Len()
 	if required > 0 {
 		// Determine number of raw bytes to read, rounding up to 4
 		count := int64((required + 3) / 4 * 3)
-		io.CopyN(r.encoder, r.reader, count)
+		_, err := io.CopyN(randEncoder, randReader, count)
+		if err != nil {
+			panic(err)
+		}
 	}
-	return r.buffer.Read(p)
+	return string(randBuffer.Next(length))
 }
 
-func (r *RandomStringReader) ReadString(length int) (string, error) {
-	buf := make([]byte, length)
-	_, err := r.Read(buf)
-	if err != nil {
-		return "", err
-	}
-	return string(buf), nil
+// RandomString returns a random non-empty string of an unspecified length
+func RandomString() string {
+	return RandomStringWithLength(rand.Intn(31) + 1)
 }
 
-func (r *RandomStringReader) MustReadString(length int) string {
-	result, err := r.ReadString(length)
-	if err != nil {
-		panic(err)
-	}
-	return result
-}
-
-func (r *RandomStringReader) MustReadStringSlice(size, length int) []string {
-	count := rand.Intn(size)
-	var result []string
+// RandomList returns a random list with a length no more than specified, where
+// each element is generated with the given function.
+func RandomList[T any](maxLength int, gen func() T) []T {
+	count := rand.Intn(maxLength)
+	result := make([]T, 0, count)
 	for i := 0; i < count; i++ {
-		result = append(result, r.MustReadString(length))
+		result = append(result, gen())
 	}
 	return result
 }
 
+// RandomTime returns a random time
 func RandomTime() time.Time {
 	loc, err := time.LoadLocation("")
 	if err != nil {

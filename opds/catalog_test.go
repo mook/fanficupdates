@@ -1,4 +1,4 @@
-package opds_test
+package opds
 
 import (
 	"bytes"
@@ -9,20 +9,18 @@ import (
 
 	"github.com/Masterminds/sprig/v3"
 	"github.com/mook/fanficupdates/model"
-	"github.com/mook/fanficupdates/opds"
 	"github.com/mook/fanficupdates/util"
 	"github.com/stretchr/testify/require"
 )
 
 func TestMakeCatalog(t *testing.T) {
 	var books []model.CalibreBook
-	stringReader := util.NewRandomStringReader()
 	updatedDate := time.Now().String()
 
 	for i := 0; i < 5; i++ {
-		books = append(books, *makeBook(t, stringReader))
+		books = append(books, *makeBook(t))
 	}
-	catalog := opds.MakeCatalog(books, updatedDate)
+	catalog := MakeCatalog(books, updatedDate)
 	rawActual, err := xml.Marshal(catalog)
 	require.NoError(t, err, "error marshaling catalog")
 	prettyActual, err := util.PrettyXML(rawActual)
@@ -42,7 +40,7 @@ func TestMakeCatalog(t *testing.T) {
 	require.NoError(t, tmpl.Execute(&expected, map[string]any{
 		"UpdatedDate": updatedDate,
 		"Entries": util.Map(books, func(book model.CalibreBook) string {
-			entryXML, err := xml.Marshal(opds.MakeEntry(book))
+			entryXML, err := xml.Marshal(MakeEntry(book))
 			require.NoError(t, err)
 			return string(entryXML)
 		}),

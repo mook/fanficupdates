@@ -3,11 +3,13 @@ package opds
 import (
 	"encoding/xml"
 	"fmt"
+	"path"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/mook/fanficupdates/model"
+	"github.com/mook/fanficupdates/util"
 )
 
 type entryLink struct {
@@ -52,41 +54,33 @@ func MakeEntry(book model.CalibreBook) *Entry {
 		Id:           fmt.Sprintf("urn:uuid:%s", book.Uuid),
 		LastModified: book.LastModified.Format(time.RFC3339),
 		Timestamp:    book.Timestamp.Format(time.RFC3339),
-		Links: []entryLink{
-			{
-				Type:   "application/epub+zip",
-				Href:   fmt.Sprintf("/get/epub/%d", book.Id),
-				Rel:    "http://opds-spec.org/acquisition",
-				Length: book.Size,
-				MTime:  book.LastModified.Format(time.RFC3339),
-			},
-			{
-				Type: "image/jpeg",
-				Href: fmt.Sprintf("/get/cover/%d", book.Id),
-				Rel:  "http://opds-spec.org/cover",
-			},
-			{
-				Type: "image/jpeg",
-				Href: fmt.Sprintf("/get/thumb/%d", book.Id),
-				Rel:  "http://opds-spec.org/thumbnail",
-			},
-			{
-				Type: "image/jpeg",
-				Href: fmt.Sprintf("/get/cover/%d", book.Id),
-				Rel:  "http://opds-spec.org/image",
-			},
-			{
-				Type: "image/jpeg",
-				Href: fmt.Sprintf("/get/thumb/%d", book.Id),
-				Rel:  "http://opds-spec.org/image/thumbnail",
-			},
-		},
 	}
 	entry.PubDate.XMLName = xml.Name{Space: "http://purl.org/dc/terms/", Local: "date"}
 	entry.PubDate.Value = book.PubDate.Format(time.RFC3339)
 	entry.Content.Type = "xhtml"
 	entry.Content.ContentWrapper.XMLName.Space = "http://www.w3.org/1999/xhtml"
 	entry.Content.ContentWrapper.XMLName.Local = "div"
+	hasEpub := util.Any(book.Formats, func(f string) bool { return path.Ext(f) == ".epub" })
+	if hasEpub {
+		entry.Links = append(entry.Links, entryLink{
+			Type:   "application/epub+zip",
+			Href:   fmt.Sprintf("/get/epub/%d", book.Id),
+			Rel:    "http://opds-spec.org/acquisition",
+			Length: book.Size,
+			MTime:  book.LastModified.Format(time.RFC3339),
+		})
+	}
+	link := func(kind string, id int, rel string) entryLink {
+		return entryLink{
+			Type: "image/jpeg",
+			Href: fmt.Sprintf("/get/%s/%d", kind, id),
+			Rel:  fmt.Sprintf("http://opds-spec.org/%s", rel),
+		}
+	}
+	entry.Links = append(entry.Links, link("cover", book.Id, "cover"))
+	entry.Links = append(entry.Links, link("thumb", book.Id, "thumbnail"))
+	entry.Links = append(entry.Links, link("cover", book.Id, "image"))
+	entry.Links = append(entry.Links, link("thumb", book.Id, "image/thumbnail"))
 	tags := book.Tags[:]
 	sort.Strings(tags)
 	entry.Content.ContentWrapper.Tags = fmt.Sprintf("TAGS: %s", strings.Join(tags, ", "))

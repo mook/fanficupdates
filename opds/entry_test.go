@@ -1,4 +1,4 @@
-package opds_test
+package opds
 
 import (
 	"bytes"
@@ -12,42 +12,40 @@ import (
 	"github.com/Masterminds/sprig/v3"
 	"github.com/google/uuid"
 	"github.com/mook/fanficupdates/model"
-	"github.com/mook/fanficupdates/opds"
 	"github.com/mook/fanficupdates/util"
 	"github.com/stretchr/testify/require"
 )
 
-func makeBook(t *testing.T, stringReader *util.RandomStringReader) *model.CalibreBook {
+func makeBook(t *testing.T) *model.CalibreBook {
 	bookUuid, err := uuid.NewRandom()
 	require.NoError(t, err, "error generating uuid")
 	return &model.CalibreBook{
-		Id:        1,
+		Id:        rand.Int(),
 		Uuid:      bookUuid.String(),
-		Publisher: stringReader.MustReadString(32),
+		Publisher: util.RandomString(),
 		Size:      rand.Int(),
 		Identifiers: map[string]string{
 			"url": fmt.Sprintf("http://test1.com/?sid=%d", rand.Int()),
 		},
-		Formats: []string{},
-		Title:   stringReader.MustReadString(32),
-		Authors: []string{
-			stringReader.MustReadString(32),
+		Formats: []string{
+			fmt.Sprintf("/dev/does/not/exist/%s.epub", util.RandomString()),
 		},
-		AuthorSort:   stringReader.MustReadString(32),
+		Title:        util.RandomString(),
+		Authors:      util.RandomList(5, util.RandomString),
+		AuthorSort:   util.RandomString(),
 		Timestamp:    model.Time3339{Time: util.RandomTime()},
 		PubDate:      model.Time3339{Time: util.RandomTime()},
 		LastModified: model.Time3339{Time: util.RandomTime()},
-		Tags:         []string{stringReader.MustReadString(16)},
-		Comments:     stringReader.MustReadString(32),
-		Languages:    []string{},
-		Cover:        stringReader.MustReadString(32),
+		Tags:         util.RandomList(5, util.RandomString),
+		Comments:     util.RandomString(),
+		Languages:    util.RandomList(5, util.RandomString),
+		Cover:        util.RandomString(),
 	}
 }
 
 func TestMakeEntry(t *testing.T) {
-	stringReader := util.NewRandomStringReader()
-	book := makeBook(t, stringReader)
-	entry := opds.MakeEntry(*book)
+	book := makeBook(t)
+	entry := MakeEntry(*book)
 	rawActual, err := xml.MarshalIndent(entry, "", "  ")
 	require.NoError(t, err, "error marshaling entry")
 	prettyActual, err := util.PrettyXML(rawActual)

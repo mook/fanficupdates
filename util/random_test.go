@@ -1,47 +1,45 @@
 package util_test
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/mook/fanficupdates/util"
+	"github.com/stretchr/testify/assert"
 )
 
-func TestRandomStringReader(t *testing.T) {
-	r := util.NewRandomStringReader()
-	sizes := []int{
-		7, 1, 5, 0, 4, 9,
+func FuzzRandomStringWithLength(f *testing.F) {
+	for _, length := range []int{7, 1, 5, 0, 4, 9} {
+		f.Add(length)
 	}
-	for _, size := range sizes {
-		t.Run(fmt.Sprintf("%d", size), func(t *testing.T) {
-			buf := make([]byte, size)
-			n, err := r.Read(buf)
-			if err != nil {
-				t.Errorf("failed to read %d bytes: %v", size, err)
-			}
-			if n != size {
-				t.Errorf("expected to read %d bytes, got %d", size, n)
-			}
-			result := string(buf)
-			if len(result) != size {
-				t.Errorf("expected to read %d bytes, got %d (%s)", size, len(result), result)
-			}
-		})
-	}
+	f.Fuzz(func(t *testing.T, size int) {
+		result := util.RandomStringWithLength(size)
+		assert.Len(t, result, size)
+	})
 }
 
-func TestReadString(t *testing.T) {
-	r := util.NewRandomStringReader()
-	sizes := []int{
-		7, 1, 5, 0, 4, 9,
+func TestRandomString(t *testing.T) {
+	result := util.RandomString()
+	assert.Greater(t, len(result), 0)
+	assert.LessOrEqual(t, len(result), 32)
+}
+
+func FuzzRandomList(f *testing.F) {
+	for _, maxLength := range []int{0, 1, 32} {
+		f.Add(maxLength)
 	}
-	for _, size := range sizes {
-		str, err := r.ReadString(size)
-		if err != nil {
-			t.Errorf("failed to read %d bytes: %v", size, err)
-		}
-		if len(str) != size {
-			t.Errorf("wanted to read %d bytes, got %d: %s", size, len(str), str)
-		}
-	}
+	f.Fuzz(func(t *testing.T, maxLength int) {
+		count := 0
+		result := util.RandomList(maxLength+1, func() string {
+			count++
+			return ""
+		})
+		assert.Len(t, result, count)
+		assert.LessOrEqual(t, count, maxLength+1)
+	})
+}
+
+func TestRandomTime(t *testing.T) {
+	result := util.RandomTime()
+	assert.NotZero(t, result)
+	assert.Zero(t, result.Nanosecond())
 }
