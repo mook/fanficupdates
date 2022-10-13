@@ -50,12 +50,13 @@ func writeError(w http.ResponseWriter, statusCode int, msg string) {
 
 // HandleCatalog handles requests for path /opds
 func (s *Server) HandleCatalog(w http.ResponseWriter, req *http.Request) {
-	buf, err := xml.Marshal(MakeCatalog(s.Books, ""))
+	buf, err := xml.Marshal(MakeCatalog(s.Books, nil))
 	if err != nil {
 		log.Printf("Failed to marshal catalog: %v", err)
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Error rendering catalog: %v", err))
 		return
 	}
+	w.Header().Add("Content-Type", "application/atom+xml;profile=opds")
 	_, _ = w.Write(buf)
 }
 

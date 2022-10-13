@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 
 	"github.com/mook/fanficupdates/calibre"
+	"github.com/mook/fanficupdates/opds"
 )
 
 func main() {
@@ -16,7 +18,11 @@ func main() {
 		fmt.Printf("error getting books: %v\n", err)
 		os.Exit(1)
 	}
-	for _, book := range books {
-		fmt.Printf("%+v\n", book)
+	server := opds.NewServer()
+	server.Books = books
+	server.Addr = ":8080"
+	err = server.ListenAndServe()
+	if err != nil {
+		log.Fatalf("error serving: %v", err)
 	}
 }

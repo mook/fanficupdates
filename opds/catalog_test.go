@@ -15,7 +15,7 @@ import (
 
 func TestMakeCatalog(t *testing.T) {
 	var books []model.CalibreBook
-	updatedDate := time.Now().String()
+	updatedDate := model.NewTime3339(time.Time{})
 
 	for i := 0; i < 5; i++ {
 		books = append(books, *makeBook(t))
