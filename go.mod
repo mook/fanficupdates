@@ -6,6 +6,7 @@ require (
 	github.com/Masterminds/sprig/v3 v3.2.2
 	github.com/google/uuid v1.3.0
 	github.com/stretchr/testify v1.8.0
+	golang.org/x/image v0.0.0-20220902085622-e7cb96979f69
 	modernc.org/sqlite v1.19.1
 )
 
