@@ -11,15 +11,17 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"time"
 
 	"github.com/mook/fanficupdates/model"
 	"github.com/mook/fanficupdates/util"
 )
 
 type Calibre struct {
-	library  string // Path to the Calibre library
-	settings string // Path to the settings directory
+	Library  string // Path to the Calibre library
+	Settings string // Path to the settings directory
 	override string // Overridden output, for testing
 }
 
@@ -28,19 +30,31 @@ type decodingBook struct {
 	Authors any // Override author field; see GetBooks() for details.
 }
 
-func (c *Calibre) WithLibrary(libraryPath string) *Calibre {
-	c.library = libraryPath
-	return c
-}
-
-func (c *Calibre) WithSettings(settingsPath string) *Calibre {
-	c.settings = settingsPath
-	return c
-}
-
 func (c *Calibre) WithOverride(override string) *Calibre {
 	c.override = override
 	return c
+}
+
+// FindPaths attempts to auto-detect the Settings path and the Library path, if
+// either were not specified.
+func (c *Calibre) FindPaths(ctx context.Context) error {
+	if c.Settings == "" {
+		script := "import calibre.constants; print(calibre.config_dir)"
+		output, err := c.run(ctx, "calibre-debug", "--command", script)
+		if err != nil {
+			return fmt.Errorf("could not find library path: %w", err)
+		}
+		c.Settings = filepath.Clean(strings.TrimSpace(output))
+	}
+	if c.Library == "" {
+		script := "import calibre.library; print(calibre.library.current_library_path())"
+		output, err := c.run(ctx, "calibre-debug", "--command", script)
+		if err != nil {
+			return fmt.Errorf("could not find library path: %w", err)
+		}
+		c.Library = filepath.Clean(strings.TrimSpace(output))
+	}
+	return nil
 }
 
 // Run the given command with arguments, capturing stdout.
@@ -54,8 +68,8 @@ func (c *Calibre) run(ctx context.Context, command string, args ...string) (stri
 	cmd.Args = append(cmd.Args, args...)
 	cmd.Stdout = buf
 	cmd.Stderr = os.Stderr
-	if c.settings != "" {
-		cmd.Env = append(os.Environ(), fmt.Sprintf("CALIBRE_CONFIG_DIRECTORY=%s", c.settings))
+	if c.Settings != "" {
+		cmd.Env = append(os.Environ(), fmt.Sprintf("CALIBRE_CONFIG_DIRECTORY=%s", c.Settings))
 	}
 	if err := cmd.Run(); err != nil {
 		return "", err
@@ -64,9 +78,9 @@ func (c *Calibre) run(ctx context.Context, command string, args ...string) (stri
 }
 
 // Run calibredb with the given arguments, returning stdout.
-func (c *Calibre) RunDBCommand(ctx context.Context, args ...string) (string, error) {
-	if c.library != "" {
-		args = append([]string{fmt.Sprintf("--library-path=%s", c.library)}, args...)
+func (c *Calibre) runDBCommand(ctx context.Context, args ...string) (string, error) {
+	if c.Library != "" {
+		args = append([]string{fmt.Sprintf("--library-path=%s", c.Library)}, args...)
 	}
 	return c.run(ctx, "calibredb", args...)
 }
@@ -96,7 +110,7 @@ func findFile(targetPath string, baseDir string) string {
 }
 
 func (c *Calibre) GetBooks(ctx context.Context) ([]model.CalibreBook, error) {
-	data, err := c.RunDBCommand(ctx, "list", "--for-machine", "--fields=all")
+	data, err := c.runDBCommand(ctx, "list", "--for-machine", "--fields=all")
 	if err != nil {
 		return nil, err
 	}
@@ -143,12 +157,84 @@ func (c *Calibre) GetBooks(ctx context.Context) ([]model.CalibreBook, error) {
 		// container).
 		next.CalibreBook.Formats = util.Filter(
 			util.Map(next.CalibreBook.Formats, func(path string) string {
-				return findFile(path, c.library)
+				return findFile(path, c.Library)
 			}),
 			func(path string) bool { return path != "" })
-		next.CalibreBook.Cover = findFile(next.CalibreBook.Cover, c.library)
+		next.CalibreBook.Cover = findFile(next.CalibreBook.Cover, c.Library)
 
 		result = append(result, *next.CalibreBook)
 	}
 	return result, nil
+}
+
+type UpdateMeta struct {
+	Authors   []string  `calibre:"authors"`
+	Comments  string    `calibre:"comments"`
+	Published time.Time `calibre:"pubdate"`
+	Publisher string    `calibre:"publisher"`
+	Series    string    `calibre:"series"`
+	Timestamp time.Time `calibre:"timestamp"`
+}
+
+func serializeMetadata(value reflect.Value) (string, error) {
+	switch value.Kind() {
+	case reflect.Array, reflect.Slice:
+		var result []string
+		for i := 0; i < value.Len(); i++ {
+			next, err := serializeMetadata(value.Index(i))
+			if err != nil {
+				return "", err
+			}
+			result = append(result, next)
+		}
+		return strings.Join(result, ","), nil
+	case reflect.String:
+		return value.String(), nil
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return fmt.Sprintf("%d", value.Int()), nil
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return fmt.Sprintf("%d", value.Uint()), nil
+	case reflect.Interface, reflect.Pointer:
+		return serializeMetadata(value.Elem())
+	case reflect.Struct:
+		time3339 := reflect.TypeOf(model.Time3339{})
+		if value.CanConvert(time3339) {
+			converted := value.Convert(time3339)
+			if converted.IsZero() {
+				return "", nil
+			}
+			return converted.Interface().(model.Time3339).Format(time.RFC3339), nil
+		}
+		stdTime := reflect.TypeOf(time.Time{})
+		if value.CanConvert(stdTime) {
+			converted := value.Convert(stdTime)
+			if converted.IsZero() {
+				return "", nil
+			}
+			return converted.Interface().(time.Time).Format(time.RFC3339), nil
+		}
+		return "", fmt.Errorf("don't know how to serialize %s/%s", value.Type().PkgPath(), value.Type().Name())
+	}
+	return "", fmt.Errorf("don't know how to serialize %s", value.Kind())
+}
+
+func (c *Calibre) UpdateBook(ctx context.Context, id int, meta UpdateMeta) error {
+	var args []string
+	val := reflect.ValueOf(meta)
+	for i := 0; i < val.Type().NumField(); i++ {
+		tag := val.Type().Field(i).Tag.Get("calibre")
+		value, err := serializeMetadata(val.Field(i))
+		if err != nil {
+			return err
+		}
+		if value != "" {
+			args = append(args, fmt.Sprintf("--field=%s:%s", tag, value))
+		}
+	}
+	args = append(args, fmt.Sprintf("%d", id))
+	_, err := c.runDBCommand(ctx, args...)
+	if err != nil {
+		return fmt.Errorf("could not update database for book #%d: %w", id, err)
+	}
+	return nil
 }

@@ -22,7 +22,7 @@ import (
 
 func TestRunDBCommand(t *testing.T) {
 	subject := Calibre{}
-	output, err := subject.RunDBCommand(context.Background(), "list", "--help")
+	output, err := subject.runDBCommand(context.Background(), "list", "--help")
 	require.NoError(t, err)
 	// Look for the "Created by Kovid Goyal" line, near the end.
 	require.Contains(t, output, "Created by")

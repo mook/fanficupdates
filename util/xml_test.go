@@ -29,6 +29,11 @@ func TestPrettyXML(t *testing.T) {
 			input:    "<elem>  text <child/> more  </elem>",
 			expected: "<elem>text\n  <child></child>more\n</elem>",
 		},
+		{
+			name:     "namespace",
+			input:    `<elem xmlns="foo"><child xmlns="bar"/></elem>`,
+			expected: "<elem xmlns=\"foo\">\n  <child xmlns=\"bar\"></child>\n</elem>",
+		},
 	}
 	for _, testcase := range cases {
 		t.Run(testcase.name, func(t *testing.T) {
