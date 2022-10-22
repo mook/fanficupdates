@@ -22,7 +22,10 @@ import (
 type Calibre struct {
 	Library  string // Path to the Calibre library
 	Settings string // Path to the settings directory
-	override string // Overridden output, for testing
+
+	// RunShim is used to mock running actual executables.  This should not be
+	// used normally.
+	RunShim func(cmd *exec.Cmd) ([]byte, error)
 }
 
 type decodingBook struct {
@@ -30,25 +33,20 @@ type decodingBook struct {
 	Authors any // Override author field; see GetBooks() for details.
 }
 
-func (c *Calibre) WithOverride(override string) *Calibre {
-	c.override = override
-	return c
-}
-
 // FindPaths attempts to auto-detect the Settings path and the Library path, if
 // either were not specified.
 func (c *Calibre) FindPaths(ctx context.Context) error {
 	if c.Settings == "" {
 		script := "import calibre.constants; print(calibre.config_dir)"
-		output, err := c.run(ctx, "calibre-debug", "--command", script)
+		output, err := c.Run(ctx, "calibre-debug", "--command", script)
 		if err != nil {
-			return fmt.Errorf("could not find library path: %w", err)
+			return fmt.Errorf("could not find settings path: %w", err)
 		}
 		c.Settings = filepath.Clean(strings.TrimSpace(output))
 	}
 	if c.Library == "" {
 		script := "import calibre.library; print(calibre.library.current_library_path())"
-		output, err := c.run(ctx, "calibre-debug", "--command", script)
+		output, err := c.Run(ctx, "calibre-debug", "--command", script)
 		if err != nil {
 			return fmt.Errorf("could not find library path: %w", err)
 		}
@@ -58,23 +56,24 @@ func (c *Calibre) FindPaths(ctx context.Context) error {
 }
 
 // Run the given command with arguments, capturing stdout.
-func (c *Calibre) run(ctx context.Context, command string, args ...string) (string, error) {
-	if c.override != "" {
-		return c.override, nil
-	}
-
-	buf := &bytes.Buffer{}
+func (c *Calibre) Run(ctx context.Context, command string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, command)
 	cmd.Args = append(cmd.Args, args...)
-	cmd.Stdout = buf
 	cmd.Stderr = os.Stderr
 	if c.Settings != "" {
 		cmd.Env = append(os.Environ(), fmt.Sprintf("CALIBRE_CONFIG_DIRECTORY=%s", c.Settings))
 	}
-	if err := cmd.Run(); err != nil {
+	var buf []byte
+	var err error
+	if c.RunShim != nil {
+		buf, err = c.RunShim(cmd)
+	} else {
+		buf, err = cmd.Output()
+	}
+	if err != nil {
 		return "", err
 	}
-	return buf.String(), nil
+	return string(buf), nil
 }
 
 // Run calibredb with the given arguments, returning stdout.
@@ -82,7 +81,7 @@ func (c *Calibre) runDBCommand(ctx context.Context, args ...string) (string, err
 	if c.Library != "" {
 		args = append([]string{fmt.Sprintf("--library-path=%s", c.Library)}, args...)
 	}
-	return c.run(ctx, "calibredb", args...)
+	return c.Run(ctx, "calibredb", args...)
 }
 
 // findFile attempts to locate the given target path within the base directory,
@@ -219,7 +218,7 @@ func serializeMetadata(value reflect.Value) (string, error) {
 }
 
 func (c *Calibre) UpdateBook(ctx context.Context, id int, meta UpdateMeta) error {
-	var args []string
+	args := []string{"set_metadata"}
 	val := reflect.ValueOf(meta)
 	for i := 0; i < val.Type().NumField(); i++ {
 		tag := val.Type().Field(i).Tag.Get("calibre")

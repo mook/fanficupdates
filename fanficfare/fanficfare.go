@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/url"
 	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -66,10 +65,11 @@ func (c *chapter) UnmarshalJSON(data []byte) error {
 type FanFicFare struct {
 	calibre        *calibre.Calibre
 	supportedSites map[string]struct{}
+	logger         logrus.Logger
 }
 
 func NewFanFicFare(ctx context.Context, calibre *calibre.Calibre) (*FanFicFare, error) {
-	result := &FanFicFare{calibre: calibre}
+	result := &FanFicFare{calibre: calibre, logger: *logrus.StandardLogger()}
 	err := result.getSupportedSites(ctx)
 	if err != nil {
 		return nil, err
@@ -79,19 +79,12 @@ func NewFanFicFare(ctx context.Context, calibre *calibre.Calibre) (*FanFicFare, 
 
 // Run FanFicFare with the given command, returning stdout.
 func (f *FanFicFare) run(ctx context.Context, args ...string) (string, error) {
-	args = append(args, "--run-plugin=FanFicFare", "--", "--non-interactive")
+	resultArgs := []string{"--run-plugin=FanFicFare", "--", "--non-interactive"}
 	if f.calibre.Library != "" {
-		args = append(args, "--library-path="+f.calibre.Library)
+		resultArgs = append(resultArgs, "--library-path="+f.calibre.Library)
 	}
-	cmd := exec.CommandContext(ctx, "calibre-debug", args...)
-	if f.calibre.Settings != "" {
-		cmd.Env = append(os.Environ(), "CALIBRE_CONFIG_DIRECTORY="+f.calibre.Settings)
-	}
-	buf, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return string(buf), nil
+	resultArgs = append(resultArgs, args...)
+	return f.calibre.Run(ctx, "calibre-debug", resultArgs...)
 }
 
 func (f *FanFicFare) getSupportedSites(ctx context.Context) error {
@@ -126,7 +119,7 @@ func (f *FanFicFare) Process(ctx context.Context, book model.CalibreBook) (bool,
 	url := book.Url()
 	if url == nil {
 		// Books without URL is just skipped without error.
-		logrus.Infof("Skipping %s, no URL", book.Title)
+		f.logger.Infof("Skipping %s, no URL", book.Title)
 		return false, nil
 	}
 
@@ -136,11 +129,11 @@ func (f *FanFicFare) Process(ctx context.Context, book model.CalibreBook) (bool,
 	}
 
 	if _, ok := f.supportedSites[tld]; !ok {
-		logrus.Infof("Skipping %s, not supported", url.String())
+		f.logger.Infof("Skipping %s, not supported", url.String())
 		return false, nil
 	}
 
-	logrus.Infof("Updating %s: %s", book.Title, url)
+	f.logger.Infof("Updating %s: %s", book.Title, url)
 	workFile, err := os.CreateTemp("", "fanficupdates-*.epub")
 	if err != nil {
 		return false, fmt.Errorf("could not create temporary file: %w", err)
@@ -167,10 +160,10 @@ func (f *FanFicFare) Process(ctx context.Context, book model.CalibreBook) (bool,
 
 	message, rawJSON, ok := strings.Cut(stdout, "\n{\n")
 	if !ok {
-		logrus.Errorf("%s", stdout)
+		f.logger.Errorf("%s", stdout)
 		return false, fmt.Errorf("could not read JSON output when updating %s", book.FilePath())
 	}
-	logrus.Infof("%s", message)
+	f.logger.Infof("%s", message)
 
 	if !strings.Contains(message, "Do update -") {
 		// Update was skipped
@@ -178,7 +171,7 @@ func (f *FanFicFare) Process(ctx context.Context, book model.CalibreBook) (bool,
 	}
 	var meta meta
 	if err = json.Unmarshal([]byte("{"+rawJSON), &meta); err != nil {
-		logrus.Debugf("{\n%s", rawJSON)
+		f.logger.Debugf("{\n%s", rawJSON)
 		return false, fmt.Errorf("could not read output metadata: %w", err)
 	}
 

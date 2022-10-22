@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"testing"
@@ -20,12 +21,104 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestFindPaths(t *testing.T) {
+	type entry struct {
+		script string
+		result string
+	}
+	expectedScripts := []entry{
+		{
+			script: "import calibre.constants; print(calibre.config_dir)",
+			result: "/path/to/settings/directory\n",
+		},
+		{
+			script: "import calibre.library; print(calibre.library.current_library_path())",
+			result: "  /path//to/settings/../library/directory      \n",
+		},
+	}
+	runCount := 0
+	testContext := context.Background()
+	subject := Calibre{RunShim: func(cmd *exec.Cmd) ([]byte, error) {
+		assert.Contains(
+			t,
+			[]string{"calibre-debug", "calibre-debug.exe"},
+			filepath.Base(cmd.Path),
+			fmt.Errorf("incorrect executable on call %d", runCount))
+		if assert.Less(t, runCount, len(expectedScripts), fmt.Sprintf("called too many times (got %d)", runCount)) {
+			assert.Equal(
+				t,
+				[]string{
+					"calibre-debug",
+					"--command",
+					expectedScripts[runCount].script,
+				},
+				cmd.Args,
+				fmt.Sprintf("incorrect arguments on call %d", runCount))
+			script := expectedScripts[runCount].result
+			runCount++
+			return []byte(script), nil
+		}
+		return nil, fmt.Errorf("too many calls")
+
+	}}
+	assert.NoError(t, subject.FindPaths(testContext))
+	assert.Equal(t, filepath.Clean("/path/to/settings/directory"), subject.Settings, "incorrect settings directory")
+	assert.Equal(t, filepath.Clean("/path/to/library/directory"), subject.Library, "incorrect library directory")
+}
+
+func TestFindPathsError(t *testing.T) {
+	t.Run("settings", func(t *testing.T) {
+		targetError := fmt.Errorf("some error")
+		c := &Calibre{
+			RunShim: func(cmd *exec.Cmd) ([]byte, error) {
+				return nil, targetError
+			},
+		}
+		err := c.FindPaths(context.Background())
+		assert.ErrorContains(t, err, "could not find settings path")
+		assert.ErrorIs(t, err, targetError)
+	})
+	t.Run("library", func(t *testing.T) {
+		targetError := fmt.Errorf("some error")
+		c := &Calibre{
+			Settings: "something",
+			RunShim: func(cmd *exec.Cmd) ([]byte, error) {
+				assert.Contains(t, cmd.Env, "CALIBRE_CONFIG_DIRECTORY=something")
+				return nil, targetError
+			},
+		}
+		err := c.FindPaths(context.Background())
+		assert.ErrorContains(t, err, "could not find library path")
+		assert.ErrorIs(t, err, targetError)
+	})
+}
+
 func TestRunDBCommand(t *testing.T) {
-	subject := Calibre{}
-	output, err := subject.runDBCommand(context.Background(), "list", "--help")
-	require.NoError(t, err)
-	// Look for the "Created by Kovid Goyal" line, near the end.
-	require.Contains(t, output, "Created by")
+	t.Run("captures calibre output", func(t *testing.T) {
+		subject := Calibre{}
+		output, err := subject.runDBCommand(context.Background(), "list", "--help")
+		if assert.NoError(t, err) {
+			// Look for the "Created by Kovid Goyal" line, near the end.
+			assert.Contains(t, output, "Created by")
+		}
+	})
+	t.Run("sets library path", func(t *testing.T) {
+		expected := "sample output"
+		c := Calibre{
+			Library: "/path/to/a/library",
+			RunShim: func(cmd *exec.Cmd) ([]byte, error) {
+				assert.Equal(t,
+					[]string{"calibredb", "--library-path=/path/to/a/library", "some", "args"},
+					cmd.Args)
+				assert.Nil(t, cmd.Stdout)
+				return []byte(expected), nil
+			},
+		}
+		result, err := c.runDBCommand(context.Background(), "some", "args")
+		if assert.NoError(t, err) {
+			assert.Equal(t, expected, result)
+		}
+	})
 }
 
 func TestFindFile(t *testing.T) {
@@ -92,7 +185,12 @@ func TestGetBooks(t *testing.T) {
 		"Book":    expected,
 		"RFC3339": time.RFC3339,
 	}))
-	subject := (&Calibre{}).WithOverride(buf.String())
+	subject := &Calibre{
+		RunShim: func(cmd *exec.Cmd) ([]byte, error) {
+			assert.Nil(t, cmd.Stdout)
+			return buf.Bytes(), nil
+		},
+	}
 	books, err := subject.GetBooks(context.Background())
 	require.NoError(t, err)
 	require.Len(t, books, 1, "Unexpected number of books")
@@ -102,10 +200,78 @@ func TestGetBooks(t *testing.T) {
 
 func TestGetBooksSingleAuthor(t *testing.T) {
 	input := `[{"id":5,"authors":"Single Author"}]`
-	subject := (&Calibre{}).WithOverride(input)
+	subject := &Calibre{
+		RunShim: func(cmd *exec.Cmd) ([]byte, error) {
+			assert.Nil(t, cmd.Stdout)
+			return []byte(input), nil
+		},
+	}
 	books, err := subject.GetBooks(context.Background())
 	require.NoError(t, err)
 	require.Len(t, books, 1)
 	book := books[0]
 	require.Equal(t, []string{"Single Author"}, book.Authors)
+}
+
+func TestUpdateBook(t *testing.T) {
+	type testCase struct {
+		name string
+		UpdateMeta
+		args   []string
+		result error
+	}
+
+	testCases := []testCase{
+		{
+			name: "filled",
+			UpdateMeta: UpdateMeta{
+				Authors:   []string{"foo", "bar"},
+				Comments:  "some comment",
+				Published: time.Date(2006, 1, 2, 15, 4, 5, 0, time.UTC),
+				Publisher: "hydraulic press",
+				Series:    "112358",
+				Timestamp: time.Date(1234, 5, 6, 7, 8, 9, 0, time.UTC),
+			},
+			args: []string{
+				"--field=authors:foo,bar",
+				"--field=comments:some comment",
+				"--field=pubdate:2006-01-02T15:04:05Z",
+				"--field=publisher:hydraulic press",
+				"--field=series:112358",
+				"--field=timestamp:1234-05-06T07:08:09Z",
+			},
+		},
+		{
+			name: "empty",
+		},
+		{
+			name:   "error",
+			result: fmt.Errorf("some error"),
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			var args []string
+			c := Calibre{
+				RunShim: func(cmd *exec.Cmd) ([]byte, error) {
+					args = cmd.Args
+					return nil, testCase.result
+				},
+			}
+			err := c.UpdateBook(
+				context.Background(),
+				12345,
+				testCase.UpdateMeta,
+			)
+			if testCase.result == nil {
+				assert.NoError(t, err)
+				expected := append([]string{"calibredb", "set_metadata"}, testCase.args...)
+				expected = append(expected, "12345")
+				assert.Equal(t, expected, args)
+			} else {
+				assert.ErrorIs(t, err, testCase.result)
+			}
+		})
+	}
 }
