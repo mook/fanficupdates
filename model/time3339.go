@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"strings"
 	"time"
 )
@@ -27,10 +28,33 @@ func (t *Time3339) UnmarshalJSON(bytes []byte) error {
 	if input == "null" {
 		return nil
 	}
-	result, err := time.Parse(time.RFC3339, input)
-	if err != nil {
-		return err
+	formats := []string{
+		time.RFC3339,
+		time.RFC1123,
+		time.RubyDate,
+		time.UnixDate,
+		time.ANSIC,
+		"2006-01-02 15:04:05",
+		"2006-01-02 15:04",
+		"2006-01-02",
+		"2006/01/02",
+		"Mon Jan 2 2006",
+		"Jan 2 2006",
+		"1/2/2006",
 	}
-	t.Time = result
-	return nil
+	var parseError *time.ParseError
+	for _, format := range formats {
+		result, err := time.Parse(format, input)
+		if err == nil {
+			t.Time = result
+			return nil
+		}
+		if !errors.As(err, &parseError) {
+			return err
+		}
+	}
+	return &time.ParseError{
+		Value:   input,
+		Message: ": failed to parse as any of the known formats",
+	}
 }

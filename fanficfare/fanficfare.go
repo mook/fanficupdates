@@ -1,6 +1,7 @@
 package fanficfare
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,12 +10,12 @@ import (
 	"os"
 	"regexp"
 	"strings"
-	"time"
 
 	"golang.org/x/net/publicsuffix"
 
 	"github.com/mook/fanficupdates/calibre"
 	"github.com/mook/fanficupdates/model"
+	"github.com/mook/fanficupdates/util"
 	"github.com/sirupsen/logrus"
 )
 
@@ -25,39 +26,55 @@ type meta struct {
 	LastUpdate  string `json:"lastupdate"`
 	NumChapters string `json:"numChapters"`
 	Publisher   string
-	Published   time.Time `json:"datePublished"`
-	Series      string    `json:"series"`
+	Published   model.Time3339 `json:"datePublished"`
+	Series      string         `json:"series"`
 	Site        string
 	Status      string
 	StoryURL    string `json:"storyUrl"`
 	Title       string
-	Updated     time.Time `json:"dateUpdated"`
-	Chapters    []chapter `json:"zchapters"`
+	Updated     model.Time3339 `json:"dateUpdated"`
+	Chapters    []chapter      `json:"zchapters"`
 }
 
-type chapter struct {
-	Number int `json:"-"`
-	Date   time.Time
+type chapterInner struct {
+	Date   model.Time3339
 	KWords string `json:"kwords"`
 	Title  string
 	URL    string `json:"url"`
 	Words  string `json:"words"`
 }
 
+type chapter struct {
+	Number int `json:"-"`
+	chapterInner
+}
+
 func (c *chapter) UnmarshalJSON(data []byte) error {
-	parts := make([]json.RawMessage, 0, 2)
-	err := json.Unmarshal(data, &parts)
+	token, err := json.NewDecoder(bytes.NewBuffer(data[:])).Token()
 	if err != nil {
 		return err
 	}
-	if len(parts) != 2 {
-		return fmt.Errorf("expected a two-tuple, got %d parts", len(parts))
-	}
-	if err = json.Unmarshal(parts[0], &c.Number); err != nil {
-		return err
-	}
-	if err = json.Unmarshal(parts[1], c); err != nil {
-		return err
+	if delim, ok := token.(json.Delim); !ok {
+		return fmt.Errorf("unexpected json token %#v parsing chapters", token)
+	} else if delim == '[' {
+		parts := make([]json.RawMessage, 0, 2)
+		err := json.Unmarshal(data, &parts)
+		if err != nil {
+			return err
+		}
+		if len(parts) != 2 {
+			return fmt.Errorf("expected a two-tuple, got %d parts", len(parts))
+		}
+		if err = json.Unmarshal(parts[0], &c.Number); err != nil {
+			return err
+		}
+		if err = json.Unmarshal(parts[1], &c.chapterInner); err != nil {
+			return err
+		}
+	} else if delim == '{' {
+
+	} else {
+		return fmt.Errorf("unexpected json delimiter %#v parsing chapters", delim)
 	}
 	return nil
 }
@@ -158,6 +175,7 @@ func (f *FanFicFare) Process(ctx context.Context, book model.CalibreBook) (bool,
 		return false, fmt.Errorf("could not update book: %w", err)
 	}
 
+	stdout = strings.ReplaceAll(stdout, "\r", "")
 	message, rawJSON, ok := strings.Cut(stdout, "\n{\n")
 	if !ok {
 		f.logger.Errorf("%s", stdout)
@@ -165,23 +183,26 @@ func (f *FanFicFare) Process(ctx context.Context, book model.CalibreBook) (bool,
 	}
 	f.logger.Infof("%s", message)
 
-	if !strings.Contains(message, "Do update -") {
+	doingUpdate := util.Any(strings.Split(message, "\n"), func(line string) bool {
+		return strings.HasPrefix(line, "Do update -")
+	})
+	if !doingUpdate {
 		// Update was skipped
 		return false, nil
 	}
 	var meta meta
 	if err = json.Unmarshal([]byte("{"+rawJSON), &meta); err != nil {
-		f.logger.Debugf("{\n%s", rawJSON)
+		f.logger.Debug("{\n" + rawJSON)
 		return false, fmt.Errorf("could not read output metadata: %w", err)
 	}
 
 	updateMeta := calibre.UpdateMeta{
 		Authors:   []string{meta.Author},
 		Comments:  meta.Description,
-		Published: meta.Published,
+		Published: meta.Published.Time,
 		Publisher: meta.Publisher,
 		Series:    meta.Series,
-		Timestamp: meta.Updated,
+		Timestamp: meta.Updated.Time,
 	}
 	if err = f.calibre.UpdateBook(ctx, book.Id, updateMeta); err != nil {
 		return false, fmt.Errorf("could not update book: %w", err)

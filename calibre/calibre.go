@@ -12,11 +12,13 @@ import (
 	"path"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/mook/fanficupdates/model"
 	"github.com/mook/fanficupdates/util"
+	"github.com/sirupsen/logrus"
 )
 
 type Calibre struct {
@@ -50,7 +52,13 @@ func (c *Calibre) FindPaths(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("could not find library path: %w", err)
 		}
-		c.Library = filepath.Clean(strings.TrimSpace(output))
+		output = strings.TrimSpace(output)
+		if runtime.GOOS == "windows" && strings.HasPrefix(output, "//") {
+			// On Windows, Calibre uses double-slash for UNC paths
+			output = filepath.FromSlash(output)
+		}
+		logrus.Debugf("auto-detecting library path %s", output)
+		c.Library = filepath.Clean(output)
 	}
 	return nil
 }
@@ -98,13 +106,13 @@ func findFile(targetPath string, baseDir string) string {
 		} else if err != nil {
 			log.Printf("could not check %s: %v, ignoring", testPath, err)
 		} else if info.IsDir() {
-			//log.Printf("skipping directory %s", testPath)
-			continue
+			logrus.Debugf("skipping directory %s", testPath)
 		} else {
 			return filepath.Clean(testPath)
 		}
 	}
 
+	logrus.Debugf("could not find file %s from %s", targetPath, baseDir)
 	return ""
 }
 

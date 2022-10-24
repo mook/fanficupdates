@@ -71,6 +71,9 @@ func main() {
 	server := opds.NewServer()
 	ctx, cancel := context.WithCancel(context.Background())
 	grp, ctx := errgroup.WithContext(ctx)
+	if err := c.FindPaths(ctx); err != nil {
+		logrus.Fatalf("Could not auto-detect paths: %v", err)
+	}
 	bookGroup := make(chan []model.CalibreBook)
 
 	books, err := c.GetBooks(ctx)

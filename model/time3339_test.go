@@ -2,6 +2,7 @@ package model_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -40,17 +41,23 @@ func TestUnmarshalJSON(t *testing.T) {
 			assert.Equal(t, expected, subject.Time)
 		}
 	})
-	t.Run("success", func(t *testing.T) {
-		subject := model.Time3339{}
-		input := []byte(`"1234-05-06T07:08:09Z"`)
-		expected := time.Date(1234, 5, 6, 7, 8, 9, 0, time.UTC)
-		if assert.NoError(t, json.Unmarshal(input, &subject)) {
-			assert.Equal(t, expected, subject.Time)
-		}
-	})
 	t.Run("error", func(t *testing.T) {
 		subject := model.Time3339{}
 		input := []byte(`"not a valid time"`)
 		assert.Error(t, json.Unmarshal(input, &subject))
 	})
+	testCases := map[string]time.Time{
+		"1234-05-06T07:08:09Z": time.Date(1234, 5, 6, 7, 8, 9, 0, time.UTC),
+		"1234-05-06":           time.Date(1234, 5, 6, 0, 0, 0, 0, time.UTC),
+		"1234-05-16 23:45":     time.Date(1234, 5, 16, 23, 45, 0, 0, time.UTC),
+	}
+	for input, expected := range testCases {
+		t.Run(input, func(t *testing.T) {
+			subject := model.Time3339{}
+			formattedInput := []byte(fmt.Sprintf(`"%s"`, input))
+			if assert.NoError(t, json.Unmarshal(formattedInput, &subject)) {
+				assert.Equal(t, expected, subject.Time)
+			}
+		})
+	}
 }

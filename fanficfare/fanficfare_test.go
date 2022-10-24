@@ -174,7 +174,7 @@ func TestProcess(t *testing.T) {
 		file.Close()
 		subj, hook := makeFff()
 		book := makeBook("http://supported.test")
-		message := fmt.Sprintf("Do update - %s", book.Title)
+		message := fmt.Sprintf("Some extra text\nDo update - %s", book.Title)
 		book.Formats = append(book.Formats, file.Name())
 		runCount := 0
 		subj.calibre.RunShim = func(cmd *exec.Cmd) ([]byte, error) {
@@ -210,7 +210,7 @@ func TestProcess(t *testing.T) {
 			return entry.Message == message
 		}, "expected message: %s", message)
 	})
-	t.Run("successfully update book ", func(t *testing.T) {
+	t.Run("successfully update book", func(t *testing.T) {
 		file, err := os.Create(path.Join(t.TempDir(), "test.epub"))
 		require.NoError(t, err)
 		file.Close()
@@ -224,7 +224,12 @@ func TestProcess(t *testing.T) {
 				runCount++
 				assert.Contains(t, cmd.Args, "--json-meta")
 				assert.Contains(t, cmd.Args, "--update-epub")
-				output := message + "\n{\n\"author\": \"someone\"}"
+				output := message + "\n{\n" + `
+					"author": "someone",
+					"zchapters": [
+						[1, {"date": "1234-05-06 07:08:09","title": "chap1"}]
+					]
+				}`
 				return []byte(output), nil
 			} else if runCount == 1 {
 				runCount++

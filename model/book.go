@@ -3,6 +3,8 @@ package model
 import (
 	"net/url"
 	"strings"
+
+	"github.com/sirupsen/logrus"
 )
 
 type CalibreBook struct {
@@ -46,5 +48,6 @@ func (b *CalibreBook) FilePath() string {
 			return path
 		}
 	}
+	logrus.Debugf("Could not find valid file for %s: %#v", b.Title, b.Formats)
 	return ""
 }
