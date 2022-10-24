@@ -170,6 +170,10 @@ func (f *FanFicFare) Process(ctx context.Context, book model.CalibreBook) (bool,
 	if err = workFile.Close(); err != nil {
 		return false, fmt.Errorf("could not close temporary epub file: %w", err)
 	}
+	err = os.Chtimes(workFile.Name(), book.Timestamp.Time, book.Timestamp.Time)
+	if err != nil {
+		return false, err
+	}
 	stdout, err := f.run(ctx, "--json-meta", "--update-epub", workFile.Name())
 	if err != nil {
 		return false, fmt.Errorf("could not update book: %w", err)
