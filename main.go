@@ -57,6 +57,7 @@ func main() {
 	quiet := pflag.CountP("quiet", "q", "Produce fewer messages")
 	batchSize := pflag.IntP("batch-size", "b", 0, "Update in chunks with the given chunk size")
 	updateInterval := pflag.DurationP("update-interval", "i", 8*time.Hour, "Interval between successive updates")
+	skipFirstUpdate := pflag.Bool("skip-first", false, "Skip initial update before waiting")
 	pflag.Parse()
 
 	logrus.SetLevel(logrus.Level(int(logrus.InfoLevel) + *verbose - *quiet))
@@ -113,12 +114,17 @@ func main() {
 		if err != nil {
 			return fmt.Errorf("error readying FanFicFare: %w", err)
 		}
+		isFirstRun := true
 		for ctx.Err() == nil {
 			func() {
-				timeout, cancel := context.WithTimeout(ctx, *updateInterval)
-				defer cancel()
-				logrus.Infof("Waiting %s for next update...", *updateInterval)
-				<-timeout.Done()
+				if !isFirstRun || *skipFirstUpdate {
+					timeout, cancel := context.WithTimeout(ctx, *updateInterval)
+					defer cancel()
+					logrus.Infof("Waiting %s for next update...", *updateInterval)
+					<-timeout.Done()
+				} else {
+					isFirstRun = false
+				}
 				if ctx.Err() != nil {
 					// Guard against parent context closing
 					return
