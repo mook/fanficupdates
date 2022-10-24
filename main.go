@@ -68,7 +68,8 @@ func main() {
 	}
 
 	server := opds.NewServer()
-	grp, ctx := errgroup.WithContext(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
+	grp, ctx := errgroup.WithContext(ctx)
 	bookGroup := make(chan []model.CalibreBook)
 
 	books, err := c.GetBooks(ctx)
@@ -78,8 +79,9 @@ func main() {
 	}
 	grp.Go(func() error {
 		// Batch books for updates
+		defer close(bookGroup)
 		if *batchSize == 0 {
-			for {
+			for ctx.Err() == nil {
 				books, err := c.GetBooks(ctx)
 				if err != nil {
 					return fmt.Errorf("error getting books: %w", err)
@@ -88,7 +90,7 @@ func main() {
 			}
 		} else {
 			buffer := make([]model.CalibreBook, 0, *batchSize*2)
-			for {
+			for ctx.Err() == nil {
 				if len(buffer) >= *batchSize {
 					bookGroup <- buffer[:*batchSize]
 					buffer = buffer[*batchSize:]
@@ -103,6 +105,7 @@ func main() {
 				buffer = buffer[*batchSize:]
 			}
 		}
+		return nil
 	})
 	grp.Go(func() error {
 		// Trigger book updates
@@ -110,10 +113,11 @@ func main() {
 		if err != nil {
 			return fmt.Errorf("error readying FanFicFare: %w", err)
 		}
-		for {
+		for ctx.Err() == nil {
 			func() {
 				timeout, cancel := context.WithTimeout(ctx, *updateInterval)
 				defer cancel()
+				logrus.Infof("Waiting %s for next update...", *updateInterval)
 				<-timeout.Done()
 				if ctx.Err() != nil {
 					// Guard against parent context closing
@@ -127,6 +131,10 @@ func main() {
 				}
 			}()
 		}
+		for <-bookGroup != nil {
+			// Drain the channel until the writer exits
+		}
+		return nil
 	})
 
 	grp.Go(func() error {
@@ -134,7 +142,9 @@ func main() {
 		ch := make(chan os.Signal, 1)
 		signal.Notify(ch, os.Interrupt)
 		<-ch
+		logrus.Info("Received interrupt, shutting down...")
 		err := server.Shutdown(ctx)
+		cancel()
 		if err != nil {
 			return fmt.Errorf("error shutting down server: %w", err)
 		}
