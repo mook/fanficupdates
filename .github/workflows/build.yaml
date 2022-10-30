@@ -1,0 +1,86 @@
+name: build
+on:
+  push: {}
+  workflow_dispatch: {}
+permissions: {}
+jobs:
+  build:
+    permissions:
+      packages: write
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        persist-credentials: false
+    - uses: docker/setup-buildx-action@v2
+      id: buildx
+    - name: Determine variables
+      id: variables
+      run: |
+        echo "::set-output name=repo::${repo#*/}"
+        echo "::set-output name=repository_low::${repo,,}"
+      env:
+        repo: ${{ github.repository }}
+    - uses: docker/metadata-action@v4
+      id: metadata
+      with:
+        images: ghcr.io/${{ steps.variables.outputs.repository_low }}
+        tags: |
+          type=sha,format=long
+          type=ref,event=branch
+          type=ref,event=tag
+    - uses: actions/cache@v2
+      with:
+        path: /tmp/buildkit-cache/buildkit-state.tar
+        key: ${{ runner.os }}-${{ runner.arch }}-buildkit-${{ github.sha }}
+        restore-keys: ${{ runner.os }}-${{ runner.arch }}s-buildkit-
+      env:
+        SEGMENT_DOWNLOAD_TIMEOUT_MIN: 10 # At that point we can just build fresh
+    - name: Restore docker cache
+      run: |
+        set -o errexit
+        if [[ -r "${path}/buildkit-state.tar" ]]; then
+          docker buildx stop
+          docker run --rm --user=0 --volumes-from="${builder}" \
+            --volume="${path}:/cache" --workdir=/ \
+            alpine tar xvf /cache/buildkit-state.tar
+        else
+          echo "No cache found" >&2
+        fi
+      env:
+        builder: buildx_buildkit_${{ steps.buildx.outputs.name }}0
+        path: /tmp/buildkit-cache
+    - uses: docker/login-action@v2
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    - uses: docker/build-push-action@v2
+      id: build
+      with:
+        push: true
+        tags: ${{ steps.metadata.outputs.tags }}
+        labels: ${{ steps.metadata.outputs.labels }}
+    - name: Cache
+      run: >-
+        docker buildx prune --force --keep-storage=5g &&
+        docker run
+        --rm
+        --user=0
+        --volumes-from="${builder}"
+        --volume="${path}:/cache"
+        --workdir=/
+        alpine tar cf /cache/buildkit-state.tar /var/lib/buildkit
+      env:
+        builder: buildx_buildkit_${{ steps.buildx.outputs.name }}0
+        path: /tmp/buildkit-cache
+      continue-on-error: true
+    - name: Build Summary
+      run: |
+        printf "### Docker Images\n\n" >> "${GITHUB_STEP_SUMMARY}"
+        for tag in $(echo "${tags}" | uniq); do
+          printf '`%s` [:arrow_upper_right:](https://%s)\n' \
+            "${tag}" "${tag}" >> "${GITHUB_STEP_SUMMARY}"
+        done
+      env:
+        tags: ${{ steps.metadata.outputs.tags }}
