@@ -3,6 +3,7 @@ package calibre
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/mook/fanficupdates/model"
 	"github.com/mook/fanficupdates/util"
+	"github.com/mook/fanficupdates/util/assertx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -217,8 +219,8 @@ func TestUpdateBook(t *testing.T) {
 	type testCase struct {
 		name string
 		UpdateMeta
-		args   []string
-		result error
+		args    [][]string
+		results []error
 	}
 
 	testCases := []testCase{
@@ -232,45 +234,79 @@ func TestUpdateBook(t *testing.T) {
 				Series:    "112358",
 				Timestamp: time.Date(1234, 5, 6, 7, 8, 9, 0, time.UTC),
 			},
-			args: []string{
-				"--field=authors:foo,bar",
-				"--field=comments:some comment",
-				"--field=pubdate:2006-01-02T15:04:05Z",
-				"--field=publisher:hydraulic press",
-				"--field=series:112358",
-				"--field=timestamp:1234-05-06T07:08:09Z",
+			args: [][]string{
+				{
+					"calibredb",
+					"set_metadata",
+					"--field=authors:foo,bar",
+					"--field=comments:some comment",
+					"--field=pubdate:2006-01-02T15:04:05Z",
+					"--field=publisher:hydraulic press",
+					"--field=series:112358",
+					"--field=timestamp:1234-05-06T07:08:09Z",
+					"12345",
+				},
+				{
+					"calibredb",
+					"add_format",
+					"12345",
+					"<bookpath>",
+				},
 			},
 		},
 		{
 			name: "empty",
+			args: [][]string{
+				{"calibredb", "set_metadata", "12345"},
+				{"calibredb", "add_format", "12345", "<bookpath>"},
+			},
 		},
 		{
-			name:   "error",
-			result: fmt.Errorf("some error"),
+			name: "error",
+			results: []error{
+				fmt.Errorf("some error"),
+			},
 		},
 	}
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			var args []string
+			var args [][]string
 			c := Calibre{
 				RunShim: func(cmd *exec.Cmd) ([]byte, error) {
-					args = cmd.Args
-					return nil, testCase.result
+					args = append(args, cmd.Args)
+					if len(testCase.results) >= len(args) {
+						return nil, testCase.results[len(args)-1]
+					}
+					return nil, nil
 				},
+			}
+			workdir := t.TempDir()
+			bookPath := path.Join(workdir, "test.epub")
+			for i, args := range testCase.args {
+				testCase.args[i] = util.Map(args, func(input string) string {
+					if input == "<bookpath>" {
+						return bookPath
+					}
+					return input
+				})
 			}
 			err := c.UpdateBook(
 				context.Background(),
 				12345,
 				testCase.UpdateMeta,
+				bookPath,
 			)
-			if testCase.result == nil {
+			if len(testCase.results) == 0 {
 				assert.NoError(t, err)
-				expected := append([]string{"calibredb", "set_metadata"}, testCase.args...)
-				expected = append(expected, "12345")
-				assert.Equal(t, expected, args)
+				assert.Equal(t, testCase.args, args)
 			} else {
-				assert.ErrorIs(t, err, testCase.result)
+				assertx.Any(
+					t,
+					testCase.results,
+					func(expectedError error) bool {
+						return errors.Is(err, expectedError)
+					})
 			}
 		})
 	}

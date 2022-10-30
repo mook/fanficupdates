@@ -165,7 +165,7 @@ func TestProcess(t *testing.T) {
 			return strings.Contains(entry.Message, "Updating Sample Book")
 		})
 		assertx.Any(t, hook.AllEntries(), func(entry *logrus.Entry) bool {
-			return entry.Message == message
+			return entry.Message == fmt.Sprintf(">>> %s", message)
 		}, "expected message: %s", message)
 	})
 	t.Run("fail to update metadata", func(t *testing.T) {
@@ -206,9 +206,11 @@ func TestProcess(t *testing.T) {
 		assertx.Any(t, hook.AllEntries(), func(entry *logrus.Entry) bool {
 			return strings.Contains(entry.Message, "Updating Sample Book")
 		})
-		assertx.Any(t, hook.AllEntries(), func(entry *logrus.Entry) bool {
-			return entry.Message == message
-		}, "expected message: %s", message)
+		for _, line := range strings.Split(message, "\n") {
+			assertx.Any(t, hook.AllEntries(), func(entry *logrus.Entry) bool {
+				return entry.Message == fmt.Sprintf(">>> %s", line)
+			}, "expected message: %s", line)
+		}
 	})
 	t.Run("successfully update book", func(t *testing.T) {
 		file, err := os.Create(path.Join(t.TempDir(), "test.epub"))
@@ -241,6 +243,19 @@ func TestProcess(t *testing.T) {
 				}
 				assert.Equal(t, expected, cmd.Args)
 				return []byte{}, nil
+			} else if runCount == 2 {
+				runCount++
+				message := fmt.Sprintf("command should have at least 1 argument: %v", cmd.Args)
+				if assert.Greater(t, len(cmd.Args), 0, message) {
+					expected := []string{
+						"calibredb",
+						"add_format",
+						fmt.Sprintf("%d", book.Id),
+						cmd.Args[len(cmd.Args)-1],
+					}
+					assert.Equal(t, expected, cmd.Args)
+				}
+				return []byte{}, nil
 			}
 			assert.Fail(
 				t,
@@ -254,8 +269,10 @@ func TestProcess(t *testing.T) {
 		assertx.Any(t, hook.AllEntries(), func(entry *logrus.Entry) bool {
 			return strings.Contains(entry.Message, "Updating Sample Book")
 		})
-		assertx.Any(t, hook.AllEntries(), func(entry *logrus.Entry) bool {
-			return entry.Message == message
-		}, "expected message: %s", message)
+		for _, line := range strings.Split(message, "\n") {
+			assertx.Any(t, hook.AllEntries(), func(entry *logrus.Entry) bool {
+				return entry.Message == fmt.Sprintf(">>> %s", line)
+			}, "expected message: %s", line)
+		}
 	})
 }
