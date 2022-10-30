@@ -225,7 +225,7 @@ func serializeMetadata(value reflect.Value) (string, error) {
 	return "", fmt.Errorf("don't know how to serialize %s", value.Kind())
 }
 
-func (c *Calibre) UpdateBook(ctx context.Context, id int, meta UpdateMeta) error {
+func (c *Calibre) UpdateBook(ctx context.Context, id int, meta UpdateMeta, bookPath string) error {
 	args := []string{"set_metadata"}
 	val := reflect.ValueOf(meta)
 	for i := 0; i < val.Type().NumField(); i++ {
@@ -243,5 +243,11 @@ func (c *Calibre) UpdateBook(ctx context.Context, id int, meta UpdateMeta) error
 	if err != nil {
 		return fmt.Errorf("could not update database for book #%d: %w", id, err)
 	}
+
+	_, err = c.runDBCommand(ctx, "add_format", fmt.Sprintf("%d", id), bookPath)
+	if err != nil {
+		return fmt.Errorf("could not update file for book #%d: %w", id, err)
+	}
+
 	return nil
 }

@@ -10,6 +10,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"golang.org/x/net/publicsuffix"
 
@@ -185,13 +186,16 @@ func (f *FanFicFare) Process(ctx context.Context, book model.CalibreBook) (bool,
 		f.logger.Errorf("%s", stdout)
 		return false, fmt.Errorf("could not read JSON output when updating %s", book.FilePath())
 	}
-	f.logger.Infof("%s", message)
+	for _, line := range strings.Split(message, "\n") {
+		f.logger.Infof(">>> %s", strings.TrimRightFunc(line, unicode.IsSpace))
+	}
 
 	doingUpdate := util.Any(strings.Split(message, "\n"), func(line string) bool {
 		return strings.HasPrefix(line, "Do update -")
 	})
 	if !doingUpdate {
 		// Update was skipped
+		f.logger.Infof("Update of %s was skipped.", book.Title)
 		return false, nil
 	}
 	var meta meta
@@ -208,9 +212,10 @@ func (f *FanFicFare) Process(ctx context.Context, book model.CalibreBook) (bool,
 		Series:    meta.Series,
 		Timestamp: meta.Updated.Time,
 	}
-	if err = f.calibre.UpdateBook(ctx, book.Id, updateMeta); err != nil {
+	if err = f.calibre.UpdateBook(ctx, book.Id, updateMeta, workFile.Name()); err != nil {
 		return false, fmt.Errorf("could not update book: %w", err)
 	}
 
+	f.logger.Infof("Completed update of %s.", book.Title)
 	return true, nil
 }
